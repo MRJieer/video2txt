@@ -80,24 +80,29 @@ class VideoProcessor:
                 # 目标音频路径（m4a格式，单声道16k采样率，兼容Whisper）
                 audio_file = str(output_dir / f"audio_{unique_id}.m4a")
                 # 构造FFmpeg命令：提取音频+转换格式+标准化参数
-                import subprocess, shlex
-                ffmpeg_cmd = (
-                    f"ffmpeg -y -i {shlex.quote(local_video_path)} "  # 输入本地MP4
-                    "-vn "  # 不处理视频流，只提取音频
-                    "-ac 1 "  # 转为单声道
-                    "-ar 16000 "  # 16k采样率（Whisper推荐）
-                    "-c:a aac "  # 音频编码
-                    "-b:a 192k "  # 音频比特率
-                    "-movflags +faststart "  # 优化文件结构
-                    f"{shlex.quote(audio_file)}"  # 输出音频文件
-                )
-                # 执行FFmpeg命令（同步执行，本地文件处理较快）
-                subprocess.check_call(ffmpeg_cmd, shell=True)
+                import subprocess
+                ffmpeg_args = [
+                    "ffmpeg", "-y",
+                    "-i", local_video_path,
+                    "-vn",
+                    "-ac", "1",
+                    "-ar", "16000",
+                    "-c:a", "aac",
+                    "-b:a", "192k",
+                    "-movflags", "+faststart",
+                    audio_file
+                ]
+                subprocess.check_call(ffmpeg_args, shell=False)
                 logger.info(f"本地视频音频提取完成: {audio_file}")
                 # 2. 获取本地视频时长（用于后续校验）
                 try:
-                    probe_cmd = f"ffprobe -v error -show_entries format=duration -of default=noprint_wrappers=1:nokey=1 {shlex.quote(local_video_path)}"
-                    out = subprocess.check_output(probe_cmd, shell=True).decode().strip()
+                    probe_args = [
+                        "ffprobe", "-v", "error",
+                        "-show_entries", "format=duration",
+                        "-of", "default=noprint_wrappers=1:nokey=1",
+                        local_video_path
+                    ]
+                    out = subprocess.check_output(probe_args, shell=False).decode().strip()
                     expected_duration = float(out) if out else 0.0
                 except Exception as e:
                     expected_duration = 0.0
@@ -118,9 +123,14 @@ class VideoProcessor:
 
             # -------------------------- 原逻辑：音频时长校验（保持不变） --------------------------
             try:
-                import subprocess, shlex
-                probe_cmd = f"ffprobe -v error -show_entries format=duration -of default=noprint_wrappers=1:nokey=1 {shlex.quote(audio_file)}"
-                out = subprocess.check_output(probe_cmd, shell=True).decode().strip()
+                import subprocess
+                probe_args_audio = [
+                    "ffprobe", "-v", "error",
+                    "-show_entries", "format=duration",
+                    "-of", "default=noprint_wrappers=1:nokey=1",
+                    audio_file
+                ]
+                out = subprocess.check_output(probe_args_audio, shell=False).decode().strip()
                 actual_duration = float(out) if out else 0.0
             except Exception as _:
                 actual_duration = 0.0
@@ -131,10 +141,24 @@ class VideoProcessor:
                 )
                 try:
                     fixed_path = str(output_dir / f"audio_{unique_id}_fixed.m4a")
-                    fix_cmd = f"ffmpeg -y -i {shlex.quote(audio_file)} -vn -c:a aac -b:a 160k -movflags +faststart {shlex.quote(fixed_path)}"
-                    subprocess.check_call(fix_cmd, shell=True)
+                    fix_args = [
+                        "ffmpeg", "-y",
+                        "-i", audio_file,
+                        "-vn",
+                        "-c:a", "aac",
+                        "-b:a", "160k",
+                        "-movflags", "+faststart",
+                        fixed_path
+                    ]
+                    subprocess.check_call(fix_args, shell=False)
                     audio_file = fixed_path
-                    out2 = subprocess.check_output(probe_cmd.replace(shlex.quote(audio_file.rsplit('.',1)[0]+'.m4a'), shlex.quote(audio_file)), shell=True).decode().strip()
+                    probe_args_fixed = [
+                        "ffprobe", "-v", "error",
+                        "-show_entries", "format=duration",
+                        "-of", "default=noprint_wrappers=1:nokey=1",
+                        audio_file
+                    ]
+                    out2 = subprocess.check_output(probe_args_fixed, shell=False).decode().strip()
                     actual_duration2 = float(out2) if out2 else 0.0
                     logger.info(f"重封装完成，新时长≈{actual_duration2:.2f}s")
                 except Exception as e:

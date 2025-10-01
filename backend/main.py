@@ -147,13 +147,18 @@ async def process_video(
                 if task.get("url") == url or task.get("filename") == file.filename:
                     return {"task_id": tid, "message": "该内容正在处理中，请等待..."}
         
-        # 生成唯一任务ID
         task_id = str(uuid.uuid4())
-        
-        # 标记为正在处理
         processing_identifiers.add(identifier)
-        
-        # 初始化任务状态
+        file_path = None
+        file_name = None
+        if file:
+            file_ext = os.path.splitext(file.filename)[1].lower()
+            temp_fp = TEMP_DIR / f"upload_{uuid.uuid4()}{file_ext}"
+            async with aiofiles.open(temp_fp, "wb") as out_file:
+                content = await file.read()
+                await out_file.write(content)
+            file_path = str(temp_fp)
+            file_name = file.filename
         tasks[task_id] = {
             "status": "processing",
             "progress": 0,
@@ -161,29 +166,27 @@ async def process_video(
             "script": None,
             "summary": None,
             "error": None,
-            "url": url,  # 链接可为空
-            "filename": file.filename if file else None  # 记录文件名
+            "url": url,
+            "filename": file_name if file_name else None
         }
         save_tasks(tasks)
-        
-        # 创建并跟踪异步任务
         task = asyncio.create_task(
             process_video_task(
-                task_id, 
-                url=url, 
-                file=file, 
+                task_id,
+                url=url,
+                file_path=file_path,
+                file_name=file_name,
                 summary_language=summary_language
             )
         )
         active_tasks[task_id] = task
-        
         return {"task_id": task_id, "message": "任务已创建，正在处理中..."}
         
     except Exception as e:
         logger.error(f"处理视频时出错: {str(e)}")
         raise HTTPException(status_code=500, detail=f"处理失败: {str(e)}")
 
-async def process_video_task(task_id: str, url: Optional[str], file: Optional[UploadFile], summary_language: str):
+async def process_video_task(task_id: str, url: Optional[str], file_path: Optional[str], file_name: Optional[str], summary_language: str):
     """
     异步处理视频任务（支持URL和本地文件）
     """
@@ -200,27 +203,17 @@ async def process_video_task(task_id: str, url: Optional[str], file: Optional[Up
         
         await asyncio.sleep(0.1)
         
-        # 处理本地文件
-        if file:
+        if file_path:
             tasks[task_id].update({
                 "progress": 15,
-                "message": f"正在处理上传文件: {file.filename}..."
+                "message": f"正在处理上传文件: {file_name}..."
             })
             save_tasks(tasks)
             await broadcast_task_update(task_id, tasks[task_id])
-            
-            # 保存上传的文件到临时目录
-            file_ext = os.path.splitext(file.filename)[1].lower()
-            temp_file = TEMP_DIR / f"upload_{uuid.uuid4()}{file_ext}"
-            async with aiofiles.open(temp_file, "wb") as out_file:
-                content = await file.read()
-                await out_file.write(content)
-            
-            # 转换本地视频为音频
-            audio_path, video_title = await video_processor.process_local_file(
-                str(temp_file), 
-                TEMP_DIR,
-                file.filename  # 使用上传的文件名作为标题
+            temp_file = Path(file_path)
+            audio_path, video_title = await video_processor.download_and_convert(
+                str(temp_file),
+                TEMP_DIR
             )
         
         # 处理URL
@@ -286,7 +279,7 @@ async def process_video_task(task_id: str, url: Optional[str], file: Optional[Up
         script = await summarizer.optimize_transcript(raw_script)
         
         # 为转录文本添加标题，并在结尾添加来源信息
-        source_info = f"source: {url}" if url else f"source: {file.filename}"
+        source_info = f"source: {url}" if url else f"source: {file_name}"
         script_with_title = f"# {video_title}\n\n{script}\n\n{source_info}\n"
         
         # 检查是否需要翻译
@@ -385,7 +378,7 @@ async def process_video_task(task_id: str, url: Optional[str], file: Optional[Up
         logger.info(f"最终状态已广播: {task_id}")
         
         # 从处理列表中移除标识符
-        identifier = url if url else f"file:{file.filename}" if file else ""
+        identifier = url if url else f"file:{file_name}" if file_name else ""
         processing_identifiers.discard(identifier)
         
         # 从活跃任务列表中移除
@@ -395,7 +388,7 @@ async def process_video_task(task_id: str, url: Optional[str], file: Optional[Up
     except Exception as e:
         logger.error(f"任务 {task_id} 处理失败: {str(e)}")
         # 从处理列表中移除标识符
-        identifier = url if url else f"file:{file.filename}" if file else ""
+        identifier = url if url else f"file:{file_name}" if file_name else ""
         processing_identifiers.discard(identifier)
         
         # 从活跃任务列表中移除

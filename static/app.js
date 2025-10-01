@@ -258,19 +258,35 @@ class VideoTranscriber {
         formData.append('summary_language', summaryLanguage);
     
         try {
-            // 发送转录请求（Content-Type 自动为 multipart/form-data）
-            const response = await axios.post('/api/transcribe', formData);
-            
+            // 发送转录请求（使用 fetch，自动 multipart/form-data）
+            const resp = await fetch(`${this.apiBase}/process-video`, { method: 'POST', body: formData });
+            if (!resp.ok) {
+                let detail = '';
+                try {
+                    const errData = await resp.json();
+                    detail = errData && (errData.detail || errData.message) ? `: ${errData.detail || errData.message}` : '';
+                } catch (_) {
+                    const text = await resp.text();
+                    detail = text ? `: ${text}` : '';
+                }
+                throw new Error(`HTTP ${resp.status}${detail}`);
+            }
+            const data = await resp.json();
+            this.currentTaskId = data && data.task_id ? data.task_id : null;
             this.setLoading(false);
-            this.showSuccess("转录任务已启动，请等待处理完成");
-            // （可选）跳转到结果页面或更新状态
+            if (this.currentTaskId) {
+                this.initializeSmartProgress();
+                this.showProgress();
+                this.startSmartProgress();
+                this.startSSE();
+            } else {
+                this.showError('任务创建失败');
+            }
         } catch (error) {
             this.setLoading(false);
             let errorMsg = "处理失败";
-            // 解析错误详情（适配后端返回格式）
-            if (error.response && error.response.data && error.response.data.detail) {
-                errorMsg += `: ${error.response.data.detail}`;
-            } else if (error.message) {
+            // 解析错误详情
+            if (error && error.message) {
                 errorMsg += `: ${error.message}`;
             }
             this.showError(errorMsg);

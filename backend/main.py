@@ -346,8 +346,17 @@ async def process_video_task(task_id: str, url: Optional[str], file_path: Option
         summary_path = TEMP_DIR / summary_filename
         async with aiofiles.open(summary_path, "w", encoding="utf-8") as f:
             await f.write(summary_with_source)
-        
-        # 更新状态：完成
+        import re
+        base_text = raw_script or ""
+        no_ts = re.sub(r"\*\*\[\s*\d{2}:\d{2}\s*-\s*\d{2}:\d{2}\s*\]\*\*", "", base_text)
+        no_md = re.sub(r"^\s*#.*$", "", no_ts, flags=re.MULTILINE)
+        no_src = re.sub(r"^\s*source:.*$", "", no_md, flags=re.MULTILINE)
+        parts = [ln.strip() for ln in no_src.splitlines() if ln.strip()]
+        clean_text = ",".join(parts)
+        clean_filename = f"clean_transcript_{safe_title}_{short_id}.txt"
+        clean_path = TEMP_DIR / clean_filename
+        async with aiofiles.open(clean_path, "w", encoding="utf-8") as f:
+            await f.write(clean_text)
         task_result = {
             "status": "completed",
             "progress": 100,
@@ -357,6 +366,8 @@ async def process_video_task(task_id: str, url: Optional[str], file_path: Option
             "summary": summary_with_source,
             "script_path": str(script_path),
             "summary_path": str(summary_path),
+            "clean_text_path": str(clean_path),
+            "clean_text_filename": clean_filename,
             "short_id": short_id,
             "safe_title": safe_title,
             "detected_language": detected_language,
